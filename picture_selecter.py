@@ -35,7 +35,7 @@ class MyGUI(QMainWindow):
         uic.loadUi(str(ui_path), self)
         self.setWindowTitle("Picture Selecter")
 
-        self.btn_start.clicked.connect(self.start_working)
+        # self.btn_start.clicked.connect(self.start_working)
         self.btn_pass.clicked.connect(self.reject_figure)
         self.btn_OK.clicked.connect(self.select_figure)
         self.btn_next.clicked.connect(self.next_figure)
@@ -52,8 +52,11 @@ class MyGUI(QMainWindow):
 
         self._input_folder = Path("")
         self._output_folder = Path("")
+        self.only_selected_figures = self.only_selected_check_box.isChecked()
+        self.only_selected_check_box.toggled.connect(self.only_selected_figures_toggle)
 
         self.current_id = None
+        self.n_selected = 0
         self.figures = []
         self.setWindowState(Qt.WindowMaximized)
         self.graphicsView.wheelEvent = self.zoom
@@ -79,11 +82,13 @@ class MyGUI(QMainWindow):
                 else:
                     self.current_id = len(self.figures)
                 self._input_folder = folder_path
+                self.n_selected = sum([x["decision"] for x in self.figures])
                 self.start_working()
         else:
             fig_names = [x.name for x in folder_path.glob(f"*.jpg")] + [
                 x.name for x in folder_path.glob(f"*.png")
             ]
+            fig_names.sort()
             if len(fig_names) == 0:
                 QMessageBox.warning(
                     self,
@@ -104,6 +109,7 @@ class MyGUI(QMainWindow):
                 df.to_csv(folder_path / "figure_list.csv", index=False)
                 self.figures = df.to_dict("records")
                 self.current_id = 0
+                self.n_selected = 0
                 self._input_folder = folder_path
                 self.start_working()
 
@@ -138,15 +144,8 @@ class MyGUI(QMainWindow):
             # self.scene.addPixmap(scale_img)
             self.graphicsView.setScene(self.scene)
             self.graphicsView.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-            status_msg = (
-                f"""Figure {self.current_id}: {self.figures[self.current_id]["figure_name"]}.    """
-                f"""Has it been checked before? {self.figures[self.current_id]["checked"]}.    """
-            )
-            if self.figures[self.current_id]["checked"]:
-                status_msg += (
-                    f"""Decision status: {self.figures[self.current_id]["decision"]}"""
-                )
-            self.statusBar().showMessage(status_msg)
+            self.update_status_bar()
+
         else:
             QMessageBox().information(
                 None,
@@ -157,6 +156,21 @@ class MyGUI(QMainWindow):
             self.statusBar().showMessage("")
             df = pd.DataFrame(data=self.figures)
             df.to_csv(self.input_folder / "figure_list.csv", index=False)
+
+    def update_status_bar(self):
+        status_msg = (
+            f"""Figure {self.current_id}: {self.figures[self.current_id]["figure_name"]}.      """
+            f"""Has it been checked before? {self.figures[self.current_id]["checked"]}.      """
+        )
+        if self.figures[self.current_id]["checked"]:
+            status_msg += (
+                f"""Decision status: {self.figures[self.current_id]["decision"]}"""
+            )
+        status_msg += f"      {self.n_selected} selected"
+        self.statusBar().showMessage(status_msg)
+
+    def only_selected_figures_toggle(self):
+        self.only_selected_figures = self.only_selected_check_box.isChecked()
 
     def start_working(self):
         if self.current_id < len(self.figures):
@@ -195,7 +209,9 @@ class MyGUI(QMainWindow):
             return
         if self.current_id < len(self.figures):
             self.figures[self.current_id]["checked"] = True
-            self.figures[self.current_id]["decision"] = False
+            if self.figures[self.current_id]["decision"] == True:
+                self.n_selected = self.n_selected - 1
+                self.figures[self.current_id]["decision"] = False
             self.check_output_folder()
             if (
                 self.output_folder / self.figures[self.current_id]["figure_name"]
@@ -203,40 +219,153 @@ class MyGUI(QMainWindow):
                 (
                     self.output_folder / self.figures[self.current_id]["figure_name"]
                 ).unlink()
-            self.current_id = self.current_id + 1
-            self.load_figure()
+            if not self.only_selected_figures:
+                self.current_id = self.current_id + 1
+                self.load_figure()
+            else:
+                n_selected = sum([x["decision"] for x in self.figures])
+                if n_selected == 0:
+                    QMessageBox().warning(
+                        None,
+                        "No figures",
+                        f"""Cannot load the next selected figure, because no figures have been selected.""",
+                        QMessageBox.Ok,
+                    )
+                    self.update_status_bar()
+                else:
+                    while True:
+                        self.current_id = self.current_id + 1
+                        if self.current_id >= len(self.figures):
+                            self.current_id = self.current_id - len(self.figures)
+                        if self.figures[self.current_id]["decision"] == True:
+                            self.load_figure()
+                            break
+                    # self.current_id = self.current_id + 1
+                    # self.load_figure()
 
     def select_figure(self):
         if not self.check_input_folder():
             return
         if self.current_id < len(self.figures):
             self.figures[self.current_id]["checked"] = True
-            self.figures[self.current_id]["decision"] = True
+            if self.figures[self.current_id]["decision"] == False:
+                self.n_selected = self.n_selected + 1
+                self.figures[self.current_id]["decision"] = True
             self.check_output_folder()
             shutil.copy2(
                 self.input_folder / self.figures[self.current_id]["figure_name"],
                 self.output_folder / self.figures[self.current_id]["figure_name"],
             )
-            self.current_id = self.current_id + 1
-            self.load_figure()
+            if not self.only_selected_figures:
+                self.current_id = self.current_id + 1
+                self.load_figure()
+            else:
+                n_selected = sum([x["decision"] for x in self.figures])
+                if n_selected == 0:
+                    QMessageBox().warning(
+                        None,
+                        "No figures",
+                        f"""Cannot load the next selected figure, because no figures have been selected.""",
+                        QMessageBox.Ok,
+                    )
+                    self.update_status_bar()
+                elif (
+                    n_selected == 1
+                    and self.figures[self.current_id]["decision"] == True
+                ):
+                    QMessageBox().information(
+                        None,
+                        "No figures",
+                        f"""Cannot load the next selected figure, because this is the only selected figure.""",
+                        QMessageBox.Ok,
+                    )
+                    self.update_status_bar()
+                else:
+                    while True:
+                        self.current_id = self.current_id + 1
+                        if self.current_id >= len(self.figures):
+                            self.current_id = self.current_id - len(self.figures)
+                        if self.figures[self.current_id]["decision"] == True:
+                            self.load_figure()
+                            break
 
     def next_figure(self):
         if not self.check_input_folder():
             return
         if self.current_id < len(self.figures):
-            self.current_id = self.current_id + 1
-            if self.current_id >= len(self.figures):
-                self.current_id = self.current_id - len(self.figures)
-            self.load_figure()
+            if not self.only_selected_figures:
+                self.current_id = self.current_id + 1
+                if self.current_id >= len(self.figures):
+                    self.current_id = self.current_id - len(self.figures)
+                self.load_figure()
+            else:
+                # n_selected = sum([x["decision"] for x in self.figures])
+                if self.n_selected == 0:
+                    QMessageBox().warning(
+                        None,
+                        "No figures",
+                        f"""No figures have been selected""",
+                        QMessageBox.Ok,
+                    )
+                    self.update_status_bar()
+                elif (
+                    self.n_selected == 1
+                    and self.figures[self.current_id]["decision"] == True
+                ):
+                    QMessageBox().information(
+                        None,
+                        "No figures",
+                        f"""Cannot load the next selected figure, because this is the only selected figure.""",
+                        QMessageBox.Ok,
+                    )
+                    self.update_status_bar()
+                else:
+                    while True:
+                        self.current_id = self.current_id + 1
+                        if self.current_id >= len(self.figures):
+                            self.current_id = self.current_id - len(self.figures)
+                        if self.figures[self.current_id]["decision"] == True:
+                            self.load_figure()
+                            break
 
     def previouse_figure(self):
         if not self.check_input_folder():
             return
         if self.current_id < len(self.figures):
-            self.current_id = self.current_id - 1
-            if self.current_id < 0:
-                self.current_id = self.current_id + len(self.figures)
-            self.load_figure()
+            if not self.only_selected_figures:
+                self.current_id = self.current_id - 1
+                if self.current_id < 0:
+                    self.current_id = self.current_id + len(self.figures)
+                self.load_figure()
+            else:
+                # n_selected = sum([x["decision"] for x in self.figures])
+                if self.n_selected == 0:
+                    QMessageBox().information(
+                        None,
+                        "No figures",
+                        f"""No figures have been selected""",
+                        QMessageBox.Ok,
+                    )
+                    self.update_status_bar()
+                elif (
+                    self.n_selected == 1
+                    and self.figures[self.current_id]["decision"] == True
+                ):
+                    QMessageBox().information(
+                        None,
+                        "No figures",
+                        f"""Cannot load the next selected figure, because this is the only selected figure.""",
+                        QMessageBox.Ok,
+                    )
+                    self.update_status_bar()
+                else:
+                    while True:
+                        self.current_id = self.current_id - 1
+                        if self.current_id < 0:
+                            self.current_id = self.current_id + len(self.figures)
+                        if self.figures[self.current_id]["decision"] == True:
+                            self.load_figure()
+                            break
 
     def select_folder(self):
         dialog = QFileDialog(self)
